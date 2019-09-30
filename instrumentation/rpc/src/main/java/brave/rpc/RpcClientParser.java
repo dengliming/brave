@@ -13,17 +13,11 @@
  */
 package brave.rpc;
 
-import brave.Span;
-
 /**
- * Marks an interface for use in {@link RpcClientHandler#handleSend(RpcClientRequest)}. This gives a
- * standard type to consider when parsing an outgoing context.
+ * Parses the request and response into reasonable defaults for rpc client spans. Subclass to
+ * customize, for example, to add tags based on response headers.
  *
- * @see RpcClientResponse
- * @since 5.8
+ * @since 5.10
  */
-public abstract class RpcClientRequest extends RpcRequest {
-  @Override public final Span.Kind spanKind() {
-    return Span.Kind.CLIENT;
-  }
+public class RpcClientParser extends RpcParser<RpcClientRequest, RpcClientResponse> {
 }

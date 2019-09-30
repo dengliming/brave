@@ -16,14 +16,11 @@ package brave.rpc;
 import brave.Span;
 
 /**
- * Marks an interface for use in {@link RpcClientHandler#handleSend(RpcClientRequest)}. This gives a
- * standard type to consider when parsing an outgoing context.
+ * Marks an interface for use in {@link RpcServerHandler#handleSend(RpcServerResponse, Throwable,
+ * Span)}. This gives a standard type to consider when parsing an incoming context.
  *
- * @see RpcClientResponse
- * @since 5.8
+ * @see RpcClientRequest
+ * @since 5.10
  */
-public abstract class RpcClientRequest extends RpcRequest {
-  @Override public final Span.Kind spanKind() {
-    return Span.Kind.CLIENT;
-  }
+public abstract class RpcServerResponse extends RpcResponse {
 }

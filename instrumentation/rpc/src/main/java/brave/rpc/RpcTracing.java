@@ -45,6 +45,16 @@ public class RpcTracing implements Closeable {
     return tracing;
   }
 
+  /** @since 5.8 */
+  public RpcClientParser clientParser() {
+    return clientParser;
+  }
+
+  /** @since 5.8 */
+  public RpcServerParser serverParser() {
+    return serverParser;
+  }
+
   /**
    * Returns an overriding sampling decision for a new trace. Defaults to ignore the request and use
    * the {@link SamplerFunctions#deferDecision() trace ID instead}.
@@ -82,11 +92,14 @@ public class RpcTracing implements Closeable {
   }
 
   final Tracing tracing;
-  final SamplerFunction<RpcRequest> clientSampler;
-  final SamplerFunction<RpcRequest> serverSampler;
+  final RpcClientParser clientParser;
+  final RpcServerParser serverParser;
+  final SamplerFunction<RpcRequest> clientSampler, serverSampler;
 
   RpcTracing(Builder builder) {
     this.tracing = builder.tracing;
+    this.clientParser = builder.clientParser;
+    this.serverParser = builder.serverParser;
     this.clientSampler = builder.clientSampler;
     this.serverSampler = builder.serverSampler;
     // assign current IFF there's no instance already current
@@ -95,18 +108,23 @@ public class RpcTracing implements Closeable {
 
   public static final class Builder {
     Tracing tracing;
-    SamplerFunction<RpcRequest> clientSampler;
-    SamplerFunction<RpcRequest> serverSampler;
+    SamplerFunction<RpcRequest> clientSampler, serverSampler;
+    RpcClientParser clientParser;
+    RpcServerParser serverParser;
 
     Builder(Tracing tracing) {
       if (tracing == null) throw new NullPointerException("tracing == null");
       this.tracing = tracing;
+      this.clientParser = new RpcClientParser();
+      this.serverParser = new RpcServerParser();
       this.clientSampler = SamplerFunctions.deferDecision();
       this.serverSampler = SamplerFunctions.deferDecision();
     }
 
     Builder(RpcTracing source) {
       this.tracing = source.tracing;
+      this.clientParser = source.clientParser;
+      this.serverParser = source.serverParser;
       this.clientSampler = source.clientSampler;
       this.serverSampler = source.serverSampler;
     }
@@ -115,6 +133,20 @@ public class RpcTracing implements Closeable {
     public Builder tracing(Tracing tracing) {
       if (tracing == null) throw new NullPointerException("tracing == null");
       this.tracing = tracing;
+      return this;
+    }
+
+    /** @see RpcTracing#clientParser() */
+    public Builder clientParser(RpcClientParser clientParser) {
+      if (clientParser == null) throw new NullPointerException("clientParser == null");
+      this.clientParser = clientParser;
+      return this;
+    }
+
+    /** @see RpcTracing#serverParser() */
+    public Builder serverParser(RpcServerParser serverParser) {
+      if (serverParser == null) throw new NullPointerException("serverParser == null");
+      this.serverParser = serverParser;
       return this;
     }
 

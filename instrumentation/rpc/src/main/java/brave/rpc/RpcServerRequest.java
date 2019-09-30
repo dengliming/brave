@@ -16,13 +16,25 @@ package brave.rpc;
 import brave.Span;
 
 /**
- * Marks an interface for use in extraction and {@link RpcRuleSampler}. This gives a standard type
- * to consider when parsing an incoming context.
+ * Marks an interface for use in {@link RpcServerHandler#handleReceive(RpcServerRequest)}. This
+ * gives a standard type to consider when parsing an incoming context.
  *
+ * @see RpcServerResponse
  * @since 5.8
  */
 public abstract class RpcServerRequest extends RpcRequest {
+
   @Override public final Span.Kind spanKind() {
     return Span.Kind.SERVER;
+  }
+
+  /**
+   * Override and return true when it is possible to parse the {@link Span#remoteIpAndPort(String,
+   * int) remote IP and port} from the {@link #unwrap() delegate}. Defaults to false.
+   *
+   * @since 5.10
+   */
+  public boolean parseClientIpAndPort(Span span) {
+    return false;
   }
 }

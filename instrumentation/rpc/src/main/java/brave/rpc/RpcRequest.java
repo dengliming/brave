@@ -13,9 +13,11 @@
  */
 package brave.rpc;
 
+import brave.Clock;
 import brave.Request;
 import brave.Span;
 import brave.internal.Nullable;
+import brave.propagation.TraceContext;
 import java.lang.reflect.Method;
 
 /**
@@ -63,6 +65,28 @@ public abstract class RpcRequest extends Request {
    * @return the RPC namespace or null if unreadable.
    */
   @Nullable public abstract String service();
+
+  /**
+   * The timestamp in epoch microseconds of the beginning of this request or zero to take this
+   * implicitly from the current clock. Defaults to zero.
+   *
+   * <p>This is helpful in two scenarios: late parsing and avoiding redundant timestamp overhead.
+   * If a server span, this helps reach the "original" beginning of the request, which is always
+   * prior to parsing.
+   *
+   * <p>Note: Overriding has the same problems as using {@link brave.Span#start(long)}. For
+   * example, it can result in negative duration if the clock used is allowed to correct backwards.
+   * It can also result in misalignments in the trace, unless {@link brave.Tracing.Builder#clock(Clock)}
+   * uses the same implementation.
+   *
+   * @see RpcResponse#finishTimestamp()
+   * @see brave.Span#start(long)
+   * @see brave.Tracing#clock(TraceContext)
+   * @since 5.10
+   */
+  public long startTimestamp() {
+    return 0L;
+  }
 
   RpcRequest() { // sealed type: only client and server
   }
