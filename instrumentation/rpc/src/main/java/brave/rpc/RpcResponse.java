@@ -14,7 +14,9 @@
 package brave.rpc;
 
 import brave.Clock;
+import brave.ErrorParser;
 import brave.Span;
+import brave.internal.Nullable;
 import brave.propagation.TraceContext;
 
 /**
@@ -37,6 +39,15 @@ abstract class RpcResponse {
    * @since 5.10
    */
   public abstract Object unwrap();
+
+  /**
+   * Returns an RPC-specific error message, which will also be tagged as "error", when present.
+   *
+   * <p>Conventionally associated with the key "rpc.error_message"
+   *
+   * @since 5.10
+   */
+  @Nullable public abstract String errorMessage();
 
   /**
    * The timestamp in epoch microseconds of the end of this request or zero to take this implicitly

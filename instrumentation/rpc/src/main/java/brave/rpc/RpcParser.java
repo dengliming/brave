@@ -46,12 +46,28 @@ class RpcParser<Req extends RpcRequest, Resp extends RpcResponse> {
   /**
    * Override to change what data from the rpc response or error are parsed into the span modeling
    * it. By default, if there is an error, {@link Tracing#errorParser()} is used prior to this
-   * method.
+   * method, potentially overridden with {@link #error(String, Throwable, SpanCustomizer)}.
    *
    * <p>Note: Either the response or error parameters may be null, but not both.
    *
    * @since 5.10
    */
   public void response(Resp response, @Nullable Throwable error, SpanCustomizer customizer) {
+    String errorMessage = response.errorMessage();
+    if (errorMessage != null) customizer.tag("rpc.error_message", errorMessage);
+    if (errorMessage != null || error != null) error(errorMessage, error, customizer);
+  }
+
+  /**
+   * Override to change what data from the RPC error are parsed into the span modeling it. By
+   * default, this overrides any error parsed from the exception with the {@code errorMessage}.
+   *
+   * <p>Note: Either the errorMessage or error parameters may be null, but not both
+   *
+   * <p>Conventionally associated with the tag key "error"
+   */
+  protected void error(@Nullable String errorMessage, @Nullable Throwable error,
+    SpanCustomizer customizer) {
+    if (errorMessage != null) customizer.tag("error", errorMessage);
   }
 }

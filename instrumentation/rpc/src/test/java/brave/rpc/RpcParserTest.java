@@ -55,12 +55,26 @@ public class RpcParserTest {
   @Test public void response_tagsNothing() {
     parser.response(response, null, customizer);
 
+    verify(response).errorMessage();
     verifyNoMoreInteractions(response, customizer);
   }
 
-  @Test public void response_tagsNothingOnError() {
+  /** Nothing is tagged because error parsing of the runtime exception happens prior */
+  @Test public void response_tagsErrorMessage() {
+    when(response.errorMessage()).thenReturn("UNAVAILABLE");
     parser.response(response, new RuntimeException("drat"), customizer);
 
+    verify(response).errorMessage();
+    verify(customizer).tag("rpc.error_message", "UNAVAILABLE");
+    verify(customizer).tag("error", "UNAVAILABLE");
+    verifyNoMoreInteractions(response, customizer);
+  }
+
+  /** Nothing is tagged because error parsing of the runtime exception happens prior */
+  @Test public void response_missingErrorMessage_tagsNothing() {
+    parser.response(response, new RuntimeException("drat"), customizer);
+
+    verify(response).errorMessage();
     verifyNoMoreInteractions(response, customizer);
   }
 }
