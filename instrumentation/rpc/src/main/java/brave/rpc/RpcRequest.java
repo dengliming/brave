@@ -88,6 +88,16 @@ public abstract class RpcRequest extends Request {
     return 0L;
   }
 
+  /**
+   * Override and return true when it is possible to parse the {@link Span#remoteIpAndPort(String,
+   * int) remote IP and port} from the {@link #unwrap() delegate}. Defaults to false.
+   *
+   * @since 5.10
+   */
+  public boolean parseRemoteIpAndPort(Span span) {
+    return false;
+  }
+
   RpcRequest() { // sealed type: only client and server
   }
 }

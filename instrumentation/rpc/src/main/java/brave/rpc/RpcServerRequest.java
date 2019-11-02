@@ -26,16 +26,4 @@ public abstract class RpcServerRequest extends RpcRequest {
   @Override public final Span.Kind spanKind() {
     return Span.Kind.SERVER;
   }
-
-  /**
-   * Override and return true when it is possible to parse the {@link Span#remoteIpAndPort(String,
-   * int) remote IP and port} from the {@link #unwrap() delegate}. Defaults to false.
-   *
-   * @since 5.10
-   */
-  // This is on the request object because by server requests happen after the network connection
-  // of the client.
-  public boolean parseRemoteIpAndPort(Span span) {
-    return false;
-  }
 }

@@ -48,9 +48,10 @@ class RpcHandler<Req extends RpcRequest, Resp extends RpcResponse> {
     return span;
   }
 
-  /** parses tags while the span is in scope (for logging for example) */
+  /** Parses socket information and tags while the span is in scope (for logging for example) */
   void parseRequest(Req request, Span span) {
     span.kind(kind);
+    request.parseRemoteIpAndPort(span);
     parser.request(request, span.customizer());
   }
 

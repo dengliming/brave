@@ -24,8 +24,11 @@ import brave.Span;
  */
 public abstract class RpcClientResponse extends RpcResponse {
   /**
-   * Override and return true when it is possible to parse the {@link Span#remoteIpAndPort(String,
-   * int) remote IP and port} from the {@link #unwrap() delegate}. Defaults to false.
+   * Like {@link RpcRequest#parseRemoteIpAndPort(Span)} for when the client library cannot read
+   * socket information before a request is made.
+   *
+   * <p>To reduce overhead, only implement this when not implementing {@link
+   * RpcRequest#parseRemoteIpAndPort(Span)}.
    *
    * @since 5.10
    */

@@ -79,11 +79,6 @@ public final class RpcServerHandler extends RpcHandler<RpcServerRequest, RpcServ
     return handleStart(request, span);
   }
 
-  @Override void parseRequest(RpcServerRequest request, Span span) {
-    request.parseRemoteIpAndPort(span);
-    super.parseRequest(request, span);
-  }
-
   /** Creates a potentially noop span representing this request */
   Span nextSpan(TraceContextOrSamplingFlags extracted, RpcServerRequest request) {
     Boolean sampled = extracted.sampled();
