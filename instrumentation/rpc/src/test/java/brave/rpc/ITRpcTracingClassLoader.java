@@ -20,7 +20,9 @@ import zipkin2.reporter.Reporter;
 import static brave.test.util.ClassLoaders.assertRunIsUnloadable;
 import static org.assertj.core.api.Assertions.assertThat;
 
-public class RpcTracingClassLoaderTest {
+// Mockito taints the classloader, through its log initialization. While this isn't an IT, this
+// works around the problem by forcing a different classloader.
+public class ITRpcTracingClassLoader {
   @Test public void unloadable_afterClose() {
     assertRunIsUnloadable(ClosesRpcTracing.class, getClass().getClassLoader());
   }
