@@ -48,10 +48,15 @@ class RpcHandler<Req extends RpcRequest, Resp extends RpcResponse> {
     return span;
   }
 
-  /** parses remote IP:port and tags while the span is in scope (for logging for example) */
+  /** parses tags while the span is in scope (for logging for example) */
   void parseRequest(Req request, Span span) {
     span.kind(kind);
     parser.request(request, span.customizer());
+  }
+
+  /** parses tags while the span is in scope (for logging for example) */
+  void parseResponse(@Nullable Resp response, @Nullable Throwable error, Span span) {
+    parser.response(response, error, span.customizer());
   }
 
   void handleFinish(@Nullable Resp response, @Nullable Throwable error, Span span) {
@@ -60,7 +65,7 @@ class RpcHandler<Req extends RpcRequest, Resp extends RpcResponse> {
     try {
       Scope ws = currentTraceContext.maybeScope(span.context());
       try {
-        parser.response(response, error, span.customizer());
+        parseResponse(response, error, span);
       } finally {
         ws.close(); // close the scope before finishing the span
       }

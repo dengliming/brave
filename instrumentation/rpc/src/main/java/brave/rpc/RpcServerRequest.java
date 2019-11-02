@@ -23,7 +23,6 @@ import brave.Span;
  * @since 5.8
  */
 public abstract class RpcServerRequest extends RpcRequest {
-
   @Override public final Span.Kind spanKind() {
     return Span.Kind.SERVER;
   }
@@ -34,7 +33,9 @@ public abstract class RpcServerRequest extends RpcRequest {
    *
    * @since 5.10
    */
-  public boolean parseClientIpAndPort(Span span) {
+  // This is on the request object because by server requests happen after the network connection
+  // of the client.
+  public boolean parseRemoteIpAndPort(Span span) {
     return false;
   }
 }

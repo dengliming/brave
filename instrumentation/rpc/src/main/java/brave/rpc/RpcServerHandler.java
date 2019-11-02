@@ -80,7 +80,7 @@ public final class RpcServerHandler extends RpcHandler<RpcServerRequest, RpcServ
   }
 
   @Override void parseRequest(RpcServerRequest request, Span span) {
-    request.parseClientIpAndPort(span);
+    request.parseRemoteIpAndPort(span);
     super.parseRequest(request, span);
   }
 

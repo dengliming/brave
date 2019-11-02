@@ -93,6 +93,12 @@ public final class RpcClientHandler extends RpcHandler<RpcClientRequest, RpcClie
     return handleStart(request, span);
   }
 
+  @Override
+  void parseResponse(@Nullable RpcClientResponse response, @Nullable Throwable error, Span span) {
+    if (response != null) response.parseRemoteIpAndPort(span);
+    super.parseResponse(response, error, span);
+  }
+
   /**
    * Finishes the client span after assigning it tags according to the response or error.
    *
