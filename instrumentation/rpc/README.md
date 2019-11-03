@@ -142,13 +142,15 @@ You generally need to...
 ```java
 Span span = handler.handleSend(request); // 1.
 Throwable error = null;
-try (Tracer.SpanInScope ws = tracer.withSpanInScope(span)) { // 2.
+SpanInScope scope = tracer.withSpanInScope(span); // 2.
+try {
   response = invoke(request); // 3.
 } catch (RuntimeException | Error e) {
   error = e; // 4.
   throw e;
 } finally {
   handler.handleReceive(response, error, span); // 5.
+  scope.close();
 }
 ```
 
@@ -199,12 +201,14 @@ You generally need to...
 ```java
 Span span = handler.handleReceive(request); // 1.
 Throwable error = null;
-try (Tracer.SpanInScope ws = tracer.withSpanInScope(span)) { // 2.
+SpanInScope scope = tracer.withSpanInScope(span); // 2.
+try {
   response = invoke(request); // 3.
 } catch (RuntimeException | Error e) {
   error = e; // 4.
   throw e;
 } finally {
   handler.handleSend(response, error, span); // 5.
+  scope.close();
 }
 ```

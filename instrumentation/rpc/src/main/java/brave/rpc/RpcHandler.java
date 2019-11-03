@@ -63,29 +63,17 @@ class RpcHandler<Req extends RpcRequest, Resp extends RpcResponse> {
   void handleFinish(@Nullable Resp response, @Nullable Throwable error, Span span) {
     if (span.isNoop()) return;
     long finishTimestamp = response != null ? response.finishTimestamp() : 0L;
+    Scope ws = currentTraceContext.maybeScope(span.context());
     try {
-      Scope ws = currentTraceContext.maybeScope(span.context());
-      try {
-        parseResponse(response, error, span);
-      } finally {
-        ws.close(); // close the scope before finishing the span
-      }
+      parseResponse(response, error, span);
     } finally {
-      finishInNullScope(span, finishTimestamp);
-    }
-  }
-
-  /** Clears the scope to prevent remote reporters from accidentally tracing */
-  void finishInNullScope(Span span, long timestamp) {
-    Scope ws = currentTraceContext.maybeScope(null);
-    try {
-      if (timestamp == 0L) {
+      // See instrumentation/RATIONALE.md for why we call finish in scope
+      if (finishTimestamp == 0L) {
         span.finish();
       } else {
-        span.finish(timestamp);
+        span.finish(finishTimestamp);
       }
-    } finally {
-      ws.close();
+      ws.close(); // close the scope before finishing the span
     }
   }
 }

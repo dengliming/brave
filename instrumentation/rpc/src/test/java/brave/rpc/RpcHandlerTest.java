@@ -25,6 +25,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -34,6 +35,7 @@ import static org.mockito.Mockito.when;
 public class RpcHandlerTest {
   CurrentTraceContext currentTraceContext = ThreadLocalCurrentTraceContext.create();
   TraceContext context = TraceContext.newBuilder().traceId(1L).spanId(10L).build();
+  TraceContext context2 = TraceContext.newBuilder().traceId(1L).spanId(11L).build();
   @Mock brave.Span span;
   @Mock SpanCustomizer spanCustomizer;
   @Mock RpcRequest request;
@@ -86,18 +88,27 @@ public class RpcHandlerTest {
     verify(span, never()).finish();
   }
 
-  @Test public void handleFinish_finishesWhenSpanNotInScope() {
+  @Test public void handleFinish_finishesWithSpanInScope() {
     doAnswer(invocation -> {
-      assertThat(currentTraceContext.get()).isNull();
+      assertThat(currentTraceContext.get()).isEqualTo(span.context());
       return null;
     }).when(span).finish();
 
     handler.handleFinish(response, null, span);
   }
 
-  @Test public void handleFinish_finishesWhenSpanNotInScope_clearingIfNecessary() {
-    try (CurrentTraceContext.Scope ws = currentTraceContext.newScope(context)) {
-      handleFinish_finishesWhenSpanNotInScope();
+  @Test public void handleFinish_finishesWithSpanInScope_resettingIfNecessary() {
+    try (CurrentTraceContext.Scope ws = currentTraceContext.newScope(context2)) {
+      handleFinish_finishesWithSpanInScope();
     }
+  }
+
+  @Test public void handleFinish_finishedEvenIfAdapterThrows() {
+    when(response.errorMessage()).thenThrow(new RuntimeException());
+
+    assertThatThrownBy(() -> handler.handleFinish(response, null, span))
+      .isInstanceOf(RuntimeException.class);
+
+    verify(span).finish();
   }
 }
