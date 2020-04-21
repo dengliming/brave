@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -14,40 +14,50 @@
 package brave.rpc;
 
 import brave.Clock;
-import brave.ErrorParser;
 import brave.Span;
+import brave.Tags;
 import brave.internal.Nullable;
 import brave.propagation.TraceContext;
 
 /**
- * Abstract response type used for parsing and sampling of rpc clients and servers.
+ * Abstract response type used for parsing and sampling of RPC clients and servers.
  *
  * @see RpcClientResponse
  * @see RpcServerResponse
  * @since 5.10
  */
-// TODO: once merged, refactor out brave.Response similar to brave.Request and backport HTTP to it
 abstract class RpcResponse {
   /**
-   * Returns the underlying rpc response object. Ex. {@code javax.servlet.rpc.RpcServletResponse}
+   * Returns the underlying RPC response object. Ex. {@code org.apache.dubbo.rpc.Result}
    *
-   * <p>Note: Some implementations are composed of multiple types, such as a response and an object
-   * representing the matched route. Moreover, an implementation may change the type returned due to
-   * refactoring. Unless you control the implementation, cast carefully (ex using {@code instance
-   * of}) instead of presuming a specific type will always be returned.
+   * <p>Note: Some implementations are composed of multiple types, such as a result and a context
+   * object. Moreover, an implementation may change the type returned due to refactoring. Unless you
+   * control the implementation, cast carefully (ex using {@code instance of}) instead of presuming
+   * a specific type will always be returned.
    *
    * @since 5.10
    */
   public abstract Object unwrap();
 
   /**
-   * Returns an RPC-specific error message, which will also be tagged as "error", when present.
+   * Returns the shortest human readable error code name. Ex. {code io.grpc.Status.Code.name()} may
+   * return "CANCELLED".
    *
-   * <p>Conventionally associated with the key "rpc.error_message"
+   * <p>Conventionally, this is used as the {@link Tags#ERROR "error" tag} and optionally tagged
+   * separately as {@linkplain RpcTags#ERROR_CODE "rpc.error_code"}.
+   *
+   * <h3>Notes</h3>
+   * This is not a success code. On success, return {@code null}. Do not return "OK" or similar as
+   * it will interfere with error interpretation.
+   *
+   * <p>When only a boolean value is available, this should return empty string ("") on {@code
+   * true} and {@code null} on false.
+   *
+   * <p>When an error code has both a numeric and text label, return the text.
    *
    * @since 5.10
    */
-  @Nullable public abstract String errorMessage();
+  @Nullable public abstract String errorCode();
 
   /**
    * The timestamp in epoch microseconds of the end of this request or zero to take this implicitly

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -17,33 +17,47 @@ import brave.Span;
 import brave.SpanCustomizer;
 import brave.Tracer;
 import brave.internal.Nullable;
+import brave.propagation.TraceContext;
 import brave.propagation.TraceContext.Extractor;
 import brave.propagation.TraceContextOrSamplingFlags;
 import brave.sampler.SamplerFunction;
 
 /**
- * This standardizes a way to instrument rpc servers, particularly in a way that encourages use of
- * portable customizations via {@link RpcServerParser}.
+ * This standardizes a way to instrument RPC servers, particularly in a way that encourages use of
+ * portable customizations via {@link RpcRequestParser} and {@link RpcResponseParser}.
  *
- * <p>This is an example of synchronous instrumentation:
+ * <p>Synchronous interception is the most straight forward instrumentation.
+ *
+ * <p>You generally need to:
+ * <ol>
+ *   <li>Extract any trace IDs from headers and start the span</li>
+ *   <li>Put the span in scope so things like log integration works</li>
+ *   <li>Process the request</li>
+ *   <li>Catch any errors</li>
+ *   <li>Complete the span</li>
+ * </ol>
  * <pre>{@code
- * Span span = handler.handleReceive(request);
+ * RpcServerRequestWrapper wrapper = new RpcServerRequestWrapper(request);
+ * Span span = handler.handleReceive(wrapper); // 1.
+ * Result result = null;
  * Throwable error = null;
- * try (Tracer.SpanInScope ws = tracer.withSpanInScope(span)) {
- *   // any downstream code can see Tracer.currentSpan() or use Tracer.currentSpanCustomizer()
- *   response = invoke(request);
+ * try (Scope ws = currentTraceContext.newScope(span.context())) { // 2.
+ *   return result = process(request); // 3.
  * } catch (RuntimeException | Error e) {
- *   error = e;
+ *   error = e; // 4.
  *   throw e;
  * } finally {
- *   handler.handleSend(response, error, span);
+ *   RpcServerResponseWrapper response = result != null
+ *     ? new RpcServerResponseWrapper(wrapper, result, error)
+ *     : null;
+ *   handler.handleSend(response, error, span); // 5.
  * }
  * }</pre>
  *
- * @since 5.10
+ * @since 5.12
  */
 public final class RpcServerHandler extends RpcHandler<RpcServerRequest, RpcServerResponse> {
-  /** @since 5.10 */
+  /** @since 5.12 */
   public static RpcServerHandler create(RpcTracing rpcTracing,
     Extractor<RpcServerRequest> extractor) {
     if (rpcTracing == null) throw new NullPointerException("rpcTracing == null");
@@ -56,11 +70,7 @@ public final class RpcServerHandler extends RpcHandler<RpcServerRequest, RpcServ
   final SamplerFunction<RpcRequest> sampler;
 
   RpcServerHandler(RpcTracing rpcTracing, Extractor<RpcServerRequest> extractor) {
-    super(
-      Span.Kind.SERVER,
-      rpcTracing.tracing().currentTraceContext(),
-      rpcTracing.serverParser()
-    );
+    super(rpcTracing.serverRequestParser(), rpcTracing.serverResponseParser());
     this.tracer = rpcTracing.tracing().tracer();
     this.extractor = extractor;
     this.sampler = rpcTracing.serverSampler();
@@ -72,7 +82,7 @@ public final class RpcServerHandler extends RpcHandler<RpcServerRequest, RpcServ
    *
    * <p>This is typically called before the request is processed by the actual library.
    *
-   * @since 5.10
+   * @since 5.12
    */
   public Span handleReceive(RpcServerRequest request) {
     Span span = nextSpan(extractor.extract(request), request);
@@ -97,11 +107,11 @@ public final class RpcServerHandler extends RpcHandler<RpcServerRequest, RpcServ
    * <p>This is typically called once the response headers are sent, and after the span is {@link
    * brave.Tracer.SpanInScope#close() no longer in scope}.
    *
-   * @see RpcServerParser#response(RpcServerResponse, Throwable, SpanCustomizer)
-   * @since 5.10
+   * @see RpcResponseParser#parse(RpcResponse, TraceContext, SpanCustomizer)
+   * @since 5.12
    */
-  public void handleSend(@Nullable RpcServerResponse response, @Nullable Throwable error,
-    Span span) {
+  public void handleSend(
+    @Nullable RpcServerResponse response, @Nullable Throwable error, Span span) {
     handleFinish(response, error, span);
   }
 }

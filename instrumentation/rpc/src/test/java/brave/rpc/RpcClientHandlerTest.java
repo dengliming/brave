@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -13,10 +13,10 @@
  */
 package brave.rpc;
 
-import brave.ScopedSpan;
-import brave.SpanCustomizer;
 import brave.Tracing;
+import brave.propagation.CurrentTraceContext.Scope;
 import brave.propagation.TraceContext;
+import brave.propagation.TraceContext.Injector;
 import brave.sampler.Sampler;
 import brave.sampler.SamplerFunction;
 import brave.sampler.SamplerFunctions;
@@ -27,93 +27,56 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnitRunner;
 import zipkin2.Span;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Answers.CALLS_REAL_METHODS;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
 public class RpcClientHandlerTest {
+  TraceContext context = TraceContext.newBuilder().traceId(1L).spanId(1L).sampled(true).build();
   List<Span> spans = new ArrayList<>();
 
   RpcTracing rpcTracing;
   RpcClientHandler handler;
 
-  @Mock SamplerFunction<RpcRequest> sampler;
-  @Mock TraceContext.Injector<RpcClientRequest> injector;
-  @Spy RpcClientParser parser = spy(new RpcClientParser());
+  @Mock Injector<RpcClientRequest> injector;
   @Mock(answer = CALLS_REAL_METHODS) RpcClientRequest request;
   @Mock(answer = CALLS_REAL_METHODS) RpcClientResponse response;
 
   @Before public void init() {
-    rpcTracing = RpcTracing.newBuilder(Tracing.newBuilder().spanReporter(spans::add).build())
-      .clientSampler(sampler).clientParser(parser).build();
+    init(rpcTracingBuilder(tracingBuilder()));
+    when(request.service()).thenReturn("zipkin.proto3.SpanService");
+    when(request.method()).thenReturn("Report");
+  }
+
+  void init(RpcTracing.Builder builder) {
+    close();
+    rpcTracing = builder.build();
     handler = RpcClientHandler.create(rpcTracing, injector);
   }
 
+  RpcTracing.Builder rpcTracingBuilder(Tracing.Builder tracingBuilder) {
+    return RpcTracing.newBuilder(tracingBuilder.build());
+  }
+
+  Tracing.Builder tracingBuilder() {
+    return Tracing.newBuilder().spanReporter(spans::add);
+  }
+
   @After public void close() {
-    Tracing.current().close();
-  }
-
-  @Test public void handleStart_parsesRpcMethod() {
-    brave.Span span = mock(brave.Span.class);
-    brave.SpanCustomizer customizer = mock(brave.SpanCustomizer.class);
-    when(span.kind(brave.Span.Kind.CLIENT)).thenReturn(span);
-    when(request.method()).thenReturn("users.UserService/GetUserToken");
-    when(span.customizer()).thenReturn(customizer);
-
-    handler.handleSend(request, span);
-
-    verify(customizer).name("users.UserService/GetUserToken");
-    verify(customizer).tag("rpc.method", "users.UserService/GetUserToken");
-    verifyNoMoreInteractions(customizer);
-  }
-
-  @Test public void handleSend_defaultsToMakeNewTrace() {
-    when(sampler.trySample(request)).thenReturn(null);
-
-    assertThat(handler.handleSend(request))
-      .extracting(brave.Span::isNoop, s -> s.context().parentId())
-      .containsExactly(false, null);
-  }
-
-  @Test public void handleSend_makesAChild() {
-    ScopedSpan parent = rpcTracing.tracing().tracer().startScopedSpan("test");
-    try {
-      assertThat(handler.handleSend(request))
-        .extracting(brave.Span::isNoop, s -> s.context().parentId())
-        .containsExactly(false, parent.context().spanId());
-    } finally {
-      parent.finish();
-    }
-  }
-
-  @Test public void handleSend_makesRequestBasedSamplingDecision() {
-    // request sampler says false eventhough trace ID sampler would have said true
-    when(sampler.trySample(request)).thenReturn(false);
-
-    assertThat(handler.handleSend(request).isNoop())
-      .isTrue();
-  }
-
-  @Test public void handleSend_injectsTheTraceContext() {
-    TraceContext context = handler.handleSend(request).context();
-
-    verify(injector).inject(context, request);
+    Tracing current = Tracing.current();
+    if (current != null) current.close();
   }
 
   @Test public void externalTimestamps() {
-    when(sampler.trySample(request)).thenReturn(null);
     when(request.startTimestamp()).thenReturn(123000L);
     when(response.finishTimestamp()).thenReturn(124000L);
 
@@ -126,9 +89,8 @@ public class RpcClientHandlerTest {
   @Test public void handleSend_traceIdSamplerSpecialCased() {
     Sampler sampler = mock(Sampler.class);
 
-    handler =
-      RpcClientHandler.create(RpcTracing.newBuilder(Tracing.newBuilder().sampler(sampler).build())
-        .clientSampler(SamplerFunctions.deferDecision()).build(), injector);
+    init(rpcTracingBuilder(tracingBuilder().sampler(sampler))
+      .clientSampler(SamplerFunctions.deferDecision()));
 
     assertThat(handler.handleSend(request).isNoop()).isTrue();
 
@@ -138,30 +100,77 @@ public class RpcClientHandlerTest {
   @Test public void handleSend_neverSamplerSpecialCased() {
     Sampler sampler = mock(Sampler.class);
 
-    handler =
-      RpcClientHandler.create(RpcTracing.newBuilder(Tracing.newBuilder().sampler(sampler).build())
-        .clientSampler(SamplerFunctions.neverSample()).build(), injector);
+    init(rpcTracingBuilder(tracingBuilder().sampler(sampler))
+      .clientSampler(SamplerFunctions.neverSample()));
 
     assertThat(handler.handleSend(request).isNoop()).isTrue();
 
     verifyNoMoreInteractions(sampler);
   }
 
-  @Test public void handleSend() {
-    when(sampler.trySample(request)).thenReturn(null);
+  @Test public void handleSend_samplerSeesRpcClientRequest() {
+    SamplerFunction<RpcRequest> clientSampler = mock(SamplerFunction.class);
+    init(rpcTracingBuilder(tracingBuilder()).clientSampler(clientSampler));
 
-    brave.Span span = handler.handleSend(request);
-    handler.handleReceive(response, null, span);
+    handler.handleSend(request);
 
-    verify(parser).request(eq(request), any(SpanCustomizer.class));
+    verify(clientSampler).trySample(request);
   }
 
-  @Test public void handleReceive() {
-    when(sampler.trySample(request)).thenReturn(null);
+  @Test public void handleSendWithParent_overrideContext() {
+    try (Scope ws = rpcTracing.tracing.currentTraceContext().newScope(context)) {
+      brave.Span span = handler.handleSendWithParent(request, null);
 
-    brave.Span span = handler.handleSend(request);
-    handler.handleReceive(response, null, span);
+      // If the overwrite was successful, we have a root span.
+      assertThat(span.context().parentIdAsLong()).isZero();
+    }
+  }
 
-    verify(parser).request(eq(request), any(SpanCustomizer.class));
+  @Test public void handleSendWithParent_overrideNull() {
+    try (Scope ws = rpcTracing.tracing.currentTraceContext().newScope(null)) {
+      brave.Span span = handler.handleSendWithParent(request, context);
+
+      // If the overwrite was successful, we have a child span.
+      assertThat(span.context().parentIdAsLong()).isEqualTo(context.spanId());
+    }
+  }
+
+  @Test public void handleReceive_finishesSpanEvenIfUnwrappedNull() {
+    brave.Span span = mock(brave.Span.class);
+    when(span.context()).thenReturn(context);
+    when(span.customizer()).thenReturn(span);
+
+    handler.handleReceive(mock(RpcClientResponse.class), null, span);
+
+    verify(span).isNoop();
+    verify(span).context();
+    verify(span).customizer();
+    verify(span).finish();
+    verifyNoMoreInteractions(span);
+  }
+
+  @Test public void handleReceive_finishesSpanEvenIfUnwrappedNull_withError() {
+    brave.Span span = mock(brave.Span.class);
+    when(span.context()).thenReturn(context);
+    when(span.customizer()).thenReturn(span);
+
+    Exception error = new RuntimeException("peanuts");
+
+    handler.handleReceive(mock(RpcClientResponse.class), error, span);
+
+    verify(span).isNoop();
+    verify(span).context();
+    verify(span).customizer();
+    verify(span).error(error);
+    verify(span).finish();
+    verifyNoMoreInteractions(span);
+  }
+
+  @Test public void handleReceive_oneOfResponseError() {
+    brave.Span span = mock(brave.Span.class);
+
+    assertThatThrownBy(() -> handler.handleReceive(null, null, span))
+      .isInstanceOf(IllegalArgumentException.class)
+      .hasMessage("Either the response or error parameters may be null, but not both");
   }
 }

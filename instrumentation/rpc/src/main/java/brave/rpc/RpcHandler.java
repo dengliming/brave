@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -15,65 +15,69 @@ package brave.rpc;
 
 import brave.Span;
 import brave.internal.Nullable;
-import brave.propagation.CurrentTraceContext;
-import brave.propagation.CurrentTraceContext.Scope;
 
-class RpcHandler<Req extends RpcRequest, Resp extends RpcResponse> {
-  final CurrentTraceContext currentTraceContext;
-  final RpcParser<Req, Resp> parser;
-  final Span.Kind kind;
+abstract class RpcHandler<Req extends RpcRequest, Resp extends RpcResponse> {
+  final RpcRequestParser requestParser;
+  final RpcResponseParser responseParser;
 
-  RpcHandler(Span.Kind kind, CurrentTraceContext currentTraceContext, RpcParser<Req, Resp> parser) {
-    this.kind = kind;
-    this.currentTraceContext = currentTraceContext;
-    this.parser = parser;
+  RpcHandler(RpcRequestParser requestParser, RpcResponseParser responseParser) {
+    this.requestParser = requestParser;
+    this.responseParser = responseParser;
   }
 
   Span handleStart(Req request, Span span) {
     if (span.isNoop()) return span;
-    Scope ws = currentTraceContext.maybeScope(span.context());
+
     try {
       parseRequest(request, span);
     } finally {
-      ws.close();
-    }
-
-    // all of the above parsing happened before a timestamp on the span
-    long timestamp = request.startTimestamp();
-    if (timestamp == 0L) {
-      span.start();
-    } else {
-      span.start(timestamp);
+      // all of the above parsing happened before a timestamp on the span
+      long timestamp = request.startTimestamp();
+      if (timestamp == 0L) {
+        span.start();
+      } else {
+        span.start(timestamp);
+      }
     }
     return span;
   }
 
-  /** Parses socket information and tags while the span is in scope (for logging for example) */
   void parseRequest(Req request, Span span) {
-    span.kind(kind);
+    span.kind(request.spanKind());
     request.parseRemoteIpAndPort(span);
-    parser.request(request, span.customizer());
+    requestParser.parse(request, span.context(), span.customizer());
   }
 
-  /** parses tags while the span is in scope (for logging for example) */
-  void parseResponse(@Nullable Resp response, @Nullable Throwable error, Span span) {
-    parser.response(response, error, span.customizer());
+  void parseResponse(Resp response, Span span) {
+    responseParser.parse(response, span.context(), span.customizer());
   }
 
   void handleFinish(@Nullable Resp response, @Nullable Throwable error, Span span) {
+    if (response == null && error == null) {
+      throw new IllegalArgumentException(
+        "Either the response or error parameters may be null, but not both");
+    }
+
     if (span.isNoop()) return;
-    long finishTimestamp = response != null ? response.finishTimestamp() : 0L;
-    Scope ws = currentTraceContext.maybeScope(span.context());
+
+    if (error != null) {
+      span.error(error); // Ensures MutableSpan.error() for FinishedSpanHandler
+
+      if (response == null) { // There's nothing to parse: finish and return;
+        span.finish();
+        return;
+      }
+    }
+
     try {
-      parseResponse(response, error, span);
+      parseResponse(response, span);
     } finally {
-      // See instrumentation/RATIONALE.md for why we call finish in scope
+      long finishTimestamp = response.finishTimestamp();
       if (finishTimestamp == 0L) {
         span.finish();
       } else {
         span.finish(finishTimestamp);
       }
-      ws.close(); // close the scope before finishing the span
     }
   }
 }

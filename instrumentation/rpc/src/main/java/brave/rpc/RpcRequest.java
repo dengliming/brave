@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -43,6 +43,7 @@ public abstract class RpcRequest extends Request {
    * {@link Method#getName() Java method name}, or in a different case format.
    *
    * @return the RPC method name or null if unreadable.
+   * @since 5.8
    */
   @Nullable public abstract String method();
 
@@ -63,6 +64,7 @@ public abstract class RpcRequest extends Request {
    * name}.
    *
    * @return the RPC namespace or null if unreadable.
+   * @since 5.8
    */
   @Nullable public abstract String service();
 
@@ -82,7 +84,7 @@ public abstract class RpcRequest extends Request {
    * @see RpcResponse#finishTimestamp()
    * @see brave.Span#start(long)
    * @see brave.Tracing#clock(TraceContext)
-   * @since 5.10
+   * @since 5.12
    */
   public long startTimestamp() {
     return 0L;
@@ -92,7 +94,7 @@ public abstract class RpcRequest extends Request {
    * Override and return true when it is possible to parse the {@link Span#remoteIpAndPort(String,
    * int) remote IP and port} from the {@link #unwrap() delegate}. Defaults to false.
    *
-   * @since 5.10
+   * @since 5.12
    */
   public boolean parseRemoteIpAndPort(Span span) {
     return false;

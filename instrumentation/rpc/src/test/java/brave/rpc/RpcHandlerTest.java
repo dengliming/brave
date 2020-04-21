@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -15,8 +15,7 @@ package brave.rpc;
 
 import brave.Span;
 import brave.SpanCustomizer;
-import brave.propagation.CurrentTraceContext;
-import brave.propagation.ThreadLocalCurrentTraceContext;
+import brave.handler.FinishedSpanHandler;
 import brave.propagation.TraceContext;
 import org.junit.Before;
 import org.junit.Test;
@@ -24,26 +23,24 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
 public class RpcHandlerTest {
-  CurrentTraceContext currentTraceContext = ThreadLocalCurrentTraceContext.create();
   TraceContext context = TraceContext.newBuilder().traceId(1L).spanId(10L).build();
-  TraceContext context2 = TraceContext.newBuilder().traceId(1L).spanId(11L).build();
-  @Mock brave.Span span;
+  @Mock Span span;
   @Mock SpanCustomizer spanCustomizer;
   @Mock RpcRequest request;
   @Mock RpcResponse response;
-  RpcHandler<RpcRequest, RpcResponse> handler;
+  RpcHandler handler;
 
   @Before public void init() {
-    handler = new RpcHandler<>(Span.Kind.SERVER, currentTraceContext, new RpcParser<>());
+    handler = new RpcHandler(RpcRequestParser.DEFAULT, RpcResponseParser.DEFAULT) {
+    };
     when(span.context()).thenReturn(context);
     when(span.customizer()).thenReturn(spanCustomizer);
   }
@@ -56,20 +53,29 @@ public class RpcHandlerTest {
     verify(span, never()).start();
   }
 
-  @Test public void parsesInNoScope() {
-    handler = new RpcHandler<>(Span.Kind.SERVER, currentTraceContext,
-      new RpcParser<RpcRequest, RpcResponse>() {
-        @Override public void request(RpcRequest request, SpanCustomizer customizer) {
-          assertThat(currentTraceContext.get()).isNotNull();
-        }
+  @Test public void handleStart_parsesTagsWithCustomizer() {
+    when(span.isNoop()).thenReturn(false);
+    when(request.spanKind()).thenReturn(Span.Kind.SERVER);
+    when(request.method()).thenReturn("Report");
 
-        @Override
-        public void response(RpcResponse response, Throwable error, SpanCustomizer customizer) {
-          assertThat(currentTraceContext.get()).isNotNull();
-        }
-      });
     handler.handleStart(request, span);
-    handler.handleFinish(response, null, span);
+
+    verify(span).kind(Span.Kind.SERVER);
+    verify(spanCustomizer).name("Report");
+    verify(spanCustomizer).tag("rpc.method", "Report");
+    verifyNoMoreInteractions(spanCustomizer);
+  }
+
+  @Test public void handleStart_addsRemoteEndpointWhenParsed() {
+    handler = new RpcHandler(RpcRequestParser.DEFAULT, RpcResponseParser.DEFAULT) {
+      @Override void parseRequest(RpcRequest request, Span span) {
+        span.remoteIpAndPort("1.2.3.4", 0);
+      }
+    };
+
+    handler.handleStart(request, span);
+
+    verify(span).remoteIpAndPort("1.2.3.4", 0);
   }
 
   @Test public void handleFinish_nothingOnNoop_success() {
@@ -88,23 +94,30 @@ public class RpcHandlerTest {
     verify(span, never()).finish();
   }
 
-  @Test public void handleFinish_finishesWithSpanInScope() {
-    doAnswer(invocation -> {
-      assertThat(currentTraceContext.get()).isEqualTo(span.context());
-      return null;
-    }).when(span).finish();
+  @Test public void handleFinish_parsesTagsWithCustomizer() {
+    when(response.errorCode()).thenReturn("CANCELLED");
+    when(span.customizer()).thenReturn(spanCustomizer);
 
     handler.handleFinish(response, null, span);
+
+    verify(spanCustomizer).tag("error", "CANCELLED");
+    verifyNoMoreInteractions(spanCustomizer);
   }
 
-  @Test public void handleFinish_finishesWithSpanInScope_resettingIfNecessary() {
-    try (CurrentTraceContext.Scope ws = currentTraceContext.newScope(context2)) {
-      handleFinish_finishesWithSpanInScope();
-    }
+  /** Allows {@link FinishedSpanHandler} to see the error regardless of parsing. */
+  @Test public void handleFinish_errorRecordedInSpan() {
+    RuntimeException error = new RuntimeException("foo");
+    when(response.errorCode()).thenReturn("CANCELLED");
+    when(span.customizer()).thenReturn(spanCustomizer);
+
+    handler.handleFinish(response, error, span);
+
+    verify(spanCustomizer).tag("error", "CANCELLED");
+    verify(span).error(error);
   }
 
   @Test public void handleFinish_finishedEvenIfAdapterThrows() {
-    when(response.errorMessage()).thenThrow(new RuntimeException());
+    when(response.errorCode()).thenThrow(new RuntimeException());
 
     assertThatThrownBy(() -> handler.handleFinish(response, null, span))
       .isInstanceOf(RuntimeException.class);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -22,27 +22,41 @@ import brave.sampler.SamplerFunction;
 
 /**
  * This standardizes a way to instrument rpc clients, particularly in a way that encourages use of
- * portable customizations via {@link RpcClientParser}.
+ * portable customizations via {@link RpcRequestParser} and {@link RpcResponseParser}.
  *
- * <p>This is an example of synchronous instrumentation:
+ * <p>Synchronous interception is the most straight forward instrumentation.
+ *
+ * <p>You generally need to:
+ * <ol>
+ *   <li>Start the span and add trace headers to the request</li>
+ *   <li>Put the span in scope so things like log integration works</li>
+ *   <li>Invoke the request</li>
+ *   <li>Catch any errors</li>
+ *   <li>Complete the span</li>
+ * </ol>
+ *
  * <pre>{@code
- * Span span = handler.handleSend(request);
+ * RpcClientRequestWrapper wrapper = new RpcClientRequestWrapper(request);
+ * Span span = handler.handleSend(wrapper); // 1.
+ * Result result = null;
  * Throwable error = null;
- * try (Tracer.SpanInScope ws = tracer.withSpanInScope(span)) {
- *   // any downstream code can see Tracer.currentSpan() or use Tracer.currentSpanCustomizer()
- *   response = invoke(request);
- * } catch (RuntimeException | Error e) {
- *   error = e;
+ * try (Scope ws = currentTraceContext.newScope(span.context())) { // 2.
+ *   return result = invoke(request); // 3.
+ * } catch (Throwable e) {
+ *   error = e; // 4.
  *   throw e;
  * } finally {
- *   handler.handleReceive(response, error, span);
+ *   RpcClientResponseWrapper response = result != null
+ *     ? new RpcClientResponseWrapper(wrapper, result, error)
+ *     : null;
+ *   handler.handleReceive(response, error, span); // 5.
  * }
  * }</pre>
  *
- * @since 5.10
+ * @since 5.12
  */
 public final class RpcClientHandler extends RpcHandler<RpcClientRequest, RpcClientResponse> {
-  /** @since 5.10 */
+  /** @since 5.12 */
   public static RpcClientHandler create(RpcTracing rpcTracing,
     Injector<RpcClientRequest> injector) {
     if (rpcTracing == null) throw new NullPointerException("rpcTracing == null");
@@ -55,11 +69,7 @@ public final class RpcClientHandler extends RpcHandler<RpcClientRequest, RpcClie
   final SamplerFunction<RpcRequest> sampler;
 
   RpcClientHandler(RpcTracing rpcTracing, Injector<RpcClientRequest> injector) {
-    super(
-      Span.Kind.CLIENT,
-      rpcTracing.tracing().currentTraceContext(),
-      rpcTracing.clientParser()
-    );
+    super(rpcTracing.clientRequestParser(), rpcTracing.clientResponseParser());
     this.tracer = rpcTracing.tracing().tracer();
     this.injector = injector;
     this.sampler = rpcTracing.clientSampler();
@@ -72,7 +82,10 @@ public final class RpcClientHandler extends RpcHandler<RpcClientRequest, RpcClie
    *
    * <p>Call this before sending the request on the wire.
    *
-   * @since 5.10
+   * @see #handleSendWithParent(RpcClientRequest, TraceContext)
+   * @see RpcTracing#clientSampler()
+   * @see RpcTracing#clientRequestParser()
+   * @since 5.12
    */
   public Span handleSend(RpcClientRequest request) {
     if (request == null) throw new NullPointerException("request == null");
@@ -80,11 +93,24 @@ public final class RpcClientHandler extends RpcHandler<RpcClientRequest, RpcClie
   }
 
   /**
+   * Like {@link #handleSend(RpcClientRequest)}, except explicitly controls the parent of the client
+   * span.
+   *
+   * @param parent the parent of the client span representing this request, or null for a new
+   * trace.
+   * @see Tracer#nextSpanWithParent(SamplerFunction, Object, TraceContext)
+   * @since 5.12
+   */
+  public Span handleSendWithParent(RpcClientRequest request, @Nullable TraceContext parent) {
+    if (request == null) throw new NullPointerException("request == null");
+    return handleSend(request, tracer.nextSpanWithParent(sampler, request, parent));
+  }
+
+  /**
    * Like {@link #handleSend(RpcClientRequest)}, except explicitly controls the span representing
    * the request.
    *
-   * @see Tracer#nextSpan(SamplerFunction, Object)
-   * @since 5.10
+   * @since 5.12
    */
   public Span handleSend(RpcClientRequest request, Span span) {
     if (request == null) throw new NullPointerException("request == null");
@@ -93,21 +119,24 @@ public final class RpcClientHandler extends RpcHandler<RpcClientRequest, RpcClie
     return handleStart(request, span);
   }
 
-  @Override
-  void parseResponse(@Nullable RpcClientResponse response, @Nullable Throwable error, Span span) {
+  @Override void parseResponse(RpcClientResponse response, Span span) {
     if (response != null) response.parseRemoteIpAndPort(span);
-    super.parseResponse(response, error, span);
+    super.parseResponse(response, span);
   }
 
   /**
    * Finishes the client span after assigning it tags according to the response or error.
    *
    * <p>This is typically called once the response headers are received, and after the span is
-   * {@link brave.Tracer.SpanInScope#close() no longer in scope}.
+   * {@link Tracer.SpanInScope#close() no longer in scope}.
    *
-   * @since 5.10
+   * <p>Note: Either the response or error parameters may be null, but not both.
+   *
+   * @see RpcTracing#clientResponseParser()
+   * @since 5.12
    */
-  public void handleReceive(RpcClientResponse response, @Nullable Throwable error, Span span) {
+  public void handleReceive(
+    @Nullable RpcClientResponse response, @Nullable Throwable error, Span span) {
     handleFinish(response, error, span);
   }
 }

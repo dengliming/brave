@@ -14,7 +14,6 @@
 package brave.rpc;
 
 import brave.SpanCustomizer;
-import brave.propagation.TraceContext;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -24,31 +23,49 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+/** This only tests things not already covered in {@code brave.TagTest} */
 @RunWith(MockitoJUnitRunner.class)
-public class RpcParserTest {
-  TraceContext context = TraceContext.newBuilder().traceId(1L).spanId(10L).build();
-  @Mock SpanCustomizer spanCustomizer;
+public class RpcTagsTest {
+  @Mock SpanCustomizer span;
   @Mock RpcRequest request;
   @Mock RpcResponse response;
 
-  @Test public void request_addsNameServiceAndMethod() {
-    when(request.service()).thenReturn("zipkin.proto3.SpanService");
+  @Test public void method() {
     when(request.method()).thenReturn("Report");
+    RpcTags.METHOD.tag(request, span);
 
-    RpcRequestParser.DEFAULT.parse(request, context, spanCustomizer);
-
-    verify(spanCustomizer).name("Report");
-    verify(spanCustomizer).tag("rpc.service", "zipkin.proto3.SpanService");
-    verify(spanCustomizer).tag("rpc.method", "Report");
-    verifyNoMoreInteractions(spanCustomizer);
+    verify(span).tag("rpc.method", "Report");
   }
 
-  @Test public void response_setsErrorTagToErrorCode() {
+  @Test public void method_null() {
+    RpcTags.METHOD.tag(request, span);
+
+    verifyNoMoreInteractions(span);
+  }
+
+  @Test public void service() {
+    when(request.service()).thenReturn("zipkin.proto3.SpanService");
+    RpcTags.SERVICE.tag(request, span);
+
+    verify(span).tag("rpc.service", "zipkin.proto3.SpanService");
+  }
+
+  @Test public void service_null() {
+    RpcTags.SERVICE.tag(request, span);
+
+    verifyNoMoreInteractions(span);
+  }
+
+  @Test public void error_code() {
     when(response.errorCode()).thenReturn("CANCELLED");
+    RpcTags.ERROR_CODE.tag(response, span);
 
-    RpcResponseParser.DEFAULT.parse(response, context, spanCustomizer);
+    verify(span).tag("rpc.error_code", "CANCELLED");
+  }
 
-    verify(spanCustomizer).tag("error", "CANCELLED");
-    verifyNoMoreInteractions(spanCustomizer);
+  @Test public void error_code_null() {
+    RpcTags.ERROR_CODE.tag(response, span);
+
+    verifyNoMoreInteractions(span);
   }
 }

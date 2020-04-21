@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 The OpenZipkin Authors
+ * Copyright 2013-2020 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -14,13 +14,13 @@
 package brave.rpc;
 
 import brave.Span;
-import brave.SpanCustomizer;
-import brave.Tracer;
 import brave.Tracing;
-import brave.propagation.SamplingFlags;
 import brave.propagation.TraceContext;
+import brave.propagation.TraceContext.Extractor;
 import brave.propagation.TraceContextOrSamplingFlags;
+import brave.sampler.Sampler;
 import brave.sampler.SamplerFunction;
+import brave.sampler.SamplerFunctions;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.After;
@@ -28,15 +28,13 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnitRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Answers.CALLS_REAL_METHODS;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -44,128 +42,76 @@ import static org.mockito.Mockito.when;
 @RunWith(MockitoJUnitRunner.class)
 public class RpcServerHandlerTest {
   List<zipkin2.Span> spans = new ArrayList<>();
+  TraceContext context = TraceContext.newBuilder().traceId(1L).spanId(1L).sampled(true).build();
 
   RpcTracing rpcTracing;
   RpcServerHandler handler;
 
-  @Mock SamplerFunction<RpcRequest> sampler;
-  @Mock TraceContext.Extractor<RpcServerRequest> extractor;
-  @Spy RpcServerParser parser = spy(new RpcServerParser());
+  @Mock Extractor<RpcServerRequest> extractor;
   @Mock(answer = CALLS_REAL_METHODS) RpcServerRequest request;
   @Mock(answer = CALLS_REAL_METHODS) RpcServerResponse response;
 
   @Before public void init() {
-    rpcTracing = RpcTracing.newBuilder(Tracing.newBuilder().spanReporter(spans::add).build())
-      .serverSampler(sampler).serverParser(parser).build();
+    init(rpcTracingBuilder(tracingBuilder()));
+  }
+
+  void init(RpcTracing.Builder builder) {
+    close();
+    rpcTracing = builder.build();
     handler = RpcServerHandler.create(rpcTracing, extractor);
+    when(request.service()).thenReturn("zipkin.proto3.SpanService");
+    when(request.method()).thenReturn("Report");
+  }
+
+  RpcTracing.Builder rpcTracingBuilder(Tracing.Builder tracingBuilder) {
+    return RpcTracing.newBuilder(tracingBuilder.build());
+  }
+
+  Tracing.Builder tracingBuilder() {
+    return Tracing.newBuilder().spanReporter(spans::add);
   }
 
   @After public void close() {
-    Tracing.current().close();
+    Tracing current = Tracing.current();
+    if (current != null) current.close();
   }
 
-  @Test public void handleStart_parsesRpcMethod() {
-    brave.Span span = mock(brave.Span.class);
-    brave.SpanCustomizer customizer = mock(brave.SpanCustomizer.class);
-    when(span.kind(Span.Kind.SERVER)).thenReturn(span);
-    when(request.method()).thenReturn("users.UserService/GetUserToken");
-    when(span.customizer()).thenReturn(customizer);
+  @Test public void handleReceive_traceIdSamplerSpecialCased() {
+    when(extractor.extract(request)).thenReturn(TraceContextOrSamplingFlags.EMPTY);
+    Sampler sampler = mock(Sampler.class);
 
-    handler.handleStart(request, span);
+    init(rpcTracingBuilder(tracingBuilder().sampler(sampler))
+      .serverSampler(SamplerFunctions.deferDecision()));
 
-    verify(customizer).name("users.UserService/GetUserToken");
-    verify(customizer).tag("rpc.method", "users.UserService/GetUserToken");
-    verifyNoMoreInteractions(customizer);
+    assertThat(handler.handleReceive(request).isNoop()).isTrue();
+
+    verify(sampler).isSampled(anyLong());
   }
 
-  @Test public void handleReceive_defaultRequest() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.EMPTY));
+  @Test public void handleReceive_neverSamplerSpecialCased() {
+    when(extractor.extract(request)).thenReturn(TraceContextOrSamplingFlags.EMPTY);
+    Sampler sampler = mock(Sampler.class);
 
-    // request sampler abstains (trace ID sampler will say true)
-    when(sampler.trySample(request)).thenReturn(null);
+    init(rpcTracingBuilder(tracingBuilder().sampler(sampler))
+      .serverSampler(SamplerFunctions.neverSample()));
 
-    Span newSpan = handler.handleReceive(request);
-    assertThat(newSpan.isNoop()).isFalse();
-    assertThat(newSpan.context().shared()).isFalse();
+    assertThat(handler.handleReceive(request).isNoop()).isTrue();
+
+    verifyNoMoreInteractions(sampler);
   }
 
-  @Test public void handleReceive_defaultsToMakeNewTrace() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.EMPTY));
+  @Test public void handleReceive_samplerSeesRpcServerRequest() {
+    when(extractor.extract(request)).thenReturn(TraceContextOrSamplingFlags.EMPTY);
+    SamplerFunction<RpcRequest> serverSampler = mock(SamplerFunction.class);
+    init(rpcTracingBuilder(tracingBuilder()).serverSampler(serverSampler));
 
-    // request sampler abstains (trace ID sampler will say true)
-    when(sampler.trySample(request)).thenReturn(null);
+    handler.handleReceive(request);
 
-    Span newSpan = handler.handleReceive(request);
-    assertThat(newSpan.isNoop()).isFalse();
-    assertThat(newSpan.context().shared()).isFalse();
-  }
-
-  @Test public void handleReceive_reusesTraceId() {
-    rpcTracing = RpcTracing.newBuilder(
-      Tracing.newBuilder().supportsJoin(false).spanReporter(spans::add).build())
-      .serverSampler(sampler).serverParser(parser).build();
-
-    Tracer tracer = rpcTracing.tracing().tracer();
-    handler = RpcServerHandler.create(rpcTracing, extractor);
-
-    TraceContext incomingContext = tracer.nextSpan().context();
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(incomingContext));
-
-    assertThat(handler.handleReceive(request).context())
-      .extracting(TraceContext::traceId, TraceContext::parentId, TraceContext::shared)
-      .containsOnly(incomingContext.traceId(), incomingContext.spanId(), false);
-  }
-
-  @Test public void handleReceive_reusesSpanIds() {
-    TraceContext incomingContext = rpcTracing.tracing().tracer().nextSpan().context();
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(incomingContext));
-
-    assertThat(handler.handleReceive(request).context())
-      .isEqualTo(incomingContext.toBuilder().shared(true).build());
-  }
-
-  @Test public void handleReceive_honorsSamplingFlags() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.NOT_SAMPLED));
-
-    assertThat(handler.handleReceive(request).isNoop())
-      .isTrue();
-  }
-
-  @Test public void handleReceive_makesRequestBasedSamplingDecision_flags() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.EMPTY));
-
-    // request sampler says false eventhough trace ID sampler would have said true
-    when(sampler.trySample(request)).thenReturn(false);
-
-    assertThat(handler.handleReceive(request).isNoop())
-      .isTrue();
-  }
-
-  @Test public void handleReceive_makesRequestBasedSamplingDecision_context() {
-    Tracer tracer = rpcTracing.tracing().tracer();
-    TraceContext incomingContext = tracer.nextSpan().context().toBuilder().sampled(null).build();
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(incomingContext));
-
-    // request sampler says false eventhough trace ID sampler would have said true
-    when(sampler.trySample(request)).thenReturn(false);
-
-    assertThat(handler.handleReceive(request).isNoop())
-      .isTrue();
+    verify(serverSampler).trySample(request);
   }
 
   @Test public void externalTimestamps() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.EMPTY));
-
-    when(sampler.trySample(request)).thenReturn(null);
-
+    when(extractor.extract(request)).thenReturn(TraceContextOrSamplingFlags.EMPTY);
     when(request.startTimestamp()).thenReturn(123000L);
     when(response.finishTimestamp()).thenReturn(124000L);
 
@@ -175,23 +121,42 @@ public class RpcServerHandlerTest {
     assertThat(spans.get(0).durationAsLong()).isEqualTo(1000L);
   }
 
-  @Test public void handleReceive() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.EMPTY));
+  @Test public void handleSend_finishesSpanEvenIfUnwrappedNull() {
+    Span span = mock(Span.class);
+    when(span.context()).thenReturn(context);
+    when(span.customizer()).thenReturn(span);
 
-    handler.handleReceive(request);
+    handler.handleSend(mock(RpcServerResponse.class), null, span);
 
-    verify(sampler).trySample(request);
+    verify(span).isNoop();
+    verify(span).context();
+    verify(span).customizer();
+    verify(span).finish();
+    verifyNoMoreInteractions(span);
   }
 
-  @Test public void handleReceive_parser() {
-    when(extractor.extract(request))
-      .thenReturn(TraceContextOrSamplingFlags.create(SamplingFlags.EMPTY));
+  @Test public void handleSend_finishesSpanEvenIfUnwrappedNull_withError() {
+    Span span = mock(Span.class);
+    when(span.context()).thenReturn(context);
+    when(span.customizer()).thenReturn(span);
 
-    when(sampler.trySample(request)).thenReturn(null);
+    Exception error = new RuntimeException("peanuts");
 
-    handler.handleReceive(request);
+    handler.handleSend(mock(RpcServerResponse.class), error, span);
 
-    verify(parser).request(eq(request), any(SpanCustomizer.class));
+    verify(span).isNoop();
+    verify(span).context();
+    verify(span).customizer();
+    verify(span).error(error);
+    verify(span).finish();
+    verifyNoMoreInteractions(span);
+  }
+
+  @Test public void handleSend_oneOfResponseError() {
+    Span span = mock(Span.class);
+
+    assertThatThrownBy(() -> handler.handleSend(null, null, span))
+      .isInstanceOf(IllegalArgumentException.class)
+      .hasMessage("Either the response or error parameters may be null, but not both");
   }
 }

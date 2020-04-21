@@ -13,6 +13,7 @@
  */
 package brave.rpc;
 
+import brave.Span;
 import brave.Tracing;
 import brave.internal.Nullable;
 import brave.sampler.SamplerFunction;
@@ -22,7 +23,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Instances built via {@link #create(Tracing)} or {@link #newBuilder(Tracing)} are registered
- * automatically such that statically configured instrumentation like HTTP clients can use {@link
+ * automatically such that statically configured instrumentation like RPC clients can use {@link
  * #current()}.
  *
  * @since 5.8
@@ -45,14 +46,45 @@ public class RpcTracing implements Closeable {
     return tracing;
   }
 
-  /** @since 5.8 */
-  public RpcClientParser clientParser() {
-    return clientParser;
+
+  /**
+   * Used by {@link RpcClientHandler#handleSend(RpcClientRequest)} to add a span name and tags
+   * about the request before it is sent to the server.
+   *
+   * @since 5.12
+   */
+  public RpcRequestParser clientRequestParser() {
+    return clientRequestParser;
   }
 
-  /** @since 5.8 */
-  public RpcServerParser serverParser() {
-    return serverParser;
+  /**
+   * Used by {@link RpcClientHandler#handleReceive(Object, Throwable, Span)} to add tags about the
+   * response received from the server.
+   *
+   * @since 5.12
+   */
+  public RpcResponseParser clientResponseParser() {
+    return clientResponseParser;
+  }
+
+  /**
+   * Used by {@link RpcServerHandler#handleReceive(RpcServerRequest)} to add a span name and tags
+   * about the request before the server processes it.
+   *
+   * @since 5.12
+   */
+  public RpcRequestParser serverRequestParser() {
+    return serverRequestParser;
+  }
+
+  /**
+   * Used by {@link RpcServerHandler#handleSend(Object, Throwable, Span)} to add tags about the
+   * response sent to the client.
+   *
+   * @since 5.12
+   */
+  public RpcResponseParser serverResponseParser() {
+    return serverResponseParser;
   }
 
   /**
@@ -92,14 +124,16 @@ public class RpcTracing implements Closeable {
   }
 
   final Tracing tracing;
-  final RpcClientParser clientParser;
-  final RpcServerParser serverParser;
+  final RpcRequestParser clientRequestParser, serverRequestParser;
+  final RpcResponseParser clientResponseParser, serverResponseParser;
   final SamplerFunction<RpcRequest> clientSampler, serverSampler;
 
   RpcTracing(Builder builder) {
     this.tracing = builder.tracing;
-    this.clientParser = builder.clientParser;
-    this.serverParser = builder.serverParser;
+    this.clientRequestParser = builder.clientRequestParser;
+    this.serverRequestParser = builder.serverRequestParser;
+    this.clientResponseParser = builder.clientResponseParser;
+    this.serverResponseParser = builder.serverResponseParser;
     this.clientSampler = builder.clientSampler;
     this.serverSampler = builder.serverSampler;
     // assign current IFF there's no instance already current
@@ -108,23 +142,25 @@ public class RpcTracing implements Closeable {
 
   public static final class Builder {
     Tracing tracing;
+    RpcRequestParser clientRequestParser, serverRequestParser;
+    RpcResponseParser clientResponseParser, serverResponseParser;
     SamplerFunction<RpcRequest> clientSampler, serverSampler;
-    RpcClientParser clientParser;
-    RpcServerParser serverParser;
 
     Builder(Tracing tracing) {
       if (tracing == null) throw new NullPointerException("tracing == null");
       this.tracing = tracing;
-      this.clientParser = new RpcClientParser();
-      this.serverParser = new RpcServerParser();
+      this.clientRequestParser = this.serverRequestParser = RpcRequestParser.DEFAULT;
+      this.clientResponseParser = this.serverResponseParser = RpcResponseParser.DEFAULT;
       this.clientSampler = SamplerFunctions.deferDecision();
       this.serverSampler = SamplerFunctions.deferDecision();
     }
 
     Builder(RpcTracing source) {
       this.tracing = source.tracing;
-      this.clientParser = source.clientParser;
-      this.serverParser = source.serverParser;
+      this.clientRequestParser = source.clientRequestParser;
+      this.serverRequestParser = source.serverRequestParser;
+      this.clientResponseParser = source.clientResponseParser;
+      this.serverResponseParser = source.serverResponseParser;
       this.clientSampler = source.clientSampler;
       this.serverSampler = source.serverSampler;
     }
@@ -136,17 +172,59 @@ public class RpcTracing implements Closeable {
       return this;
     }
 
-    /** @see RpcTracing#clientParser() */
-    public Builder clientParser(RpcClientParser clientParser) {
-      if (clientParser == null) throw new NullPointerException("clientParser == null");
-      this.clientParser = clientParser;
+    /**
+     * Overrides the tagging policy for RPC client requests.
+     *
+     * @see RpcTracing#clientRequestParser()
+     * @since 5.12
+     */
+    public Builder clientRequestParser(RpcRequestParser clientRequestParser) {
+      if (clientRequestParser == null) {
+        throw new NullPointerException("clientRequestParser == null");
+      }
+      this.clientRequestParser = clientRequestParser;
       return this;
     }
 
-    /** @see RpcTracing#serverParser() */
-    public Builder serverParser(RpcServerParser serverParser) {
-      if (serverParser == null) throw new NullPointerException("serverParser == null");
-      this.serverParser = serverParser;
+    /**
+     * Overrides the tagging policy for RPC client responses.
+     *
+     * @see RpcTracing#clientResponseParser()
+     * @since 5.12
+     */
+    public Builder clientResponseParser(RpcResponseParser clientResponseParser) {
+      if (clientResponseParser == null) {
+        throw new NullPointerException("clientResponseParser == null");
+      }
+      this.clientResponseParser = clientResponseParser;
+      return this;
+    }
+
+    /**
+     * Overrides the tagging policy for RPC server requests.
+     *
+     * @see RpcTracing#serverRequestParser()
+     * @since 5.12
+     */
+    public Builder serverRequestParser(RpcRequestParser serverRequestParser) {
+      if (serverRequestParser == null) {
+        throw new NullPointerException("serverRequestParser == null");
+      }
+      this.serverRequestParser = serverRequestParser;
+      return this;
+    }
+
+    /**
+     * Overrides the tagging policy for RPC server responses.
+     *
+     * @see RpcTracing#serverResponseParser()
+     * @since 5.12
+     */
+    public Builder serverResponseParser(RpcResponseParser serverResponseParser) {
+      if (serverResponseParser == null) {
+        throw new NullPointerException("serverResponseParser == null");
+      }
+      this.serverResponseParser = serverResponseParser;
       return this;
     }
 
