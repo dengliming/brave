@@ -27,7 +27,7 @@
   <properties>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
-    <httpclient.version>4.3.6</httpclient.version>
+    <httpclient.version>4.5.3</httpclient.version>
   </properties>
 
   <dependencies>
